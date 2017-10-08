@@ -8,7 +8,12 @@
 #include <iostream>
 #include <algorithm>
 
-extern HANDLE GetSonicHandle(const std::string & szWatchedProcessName, const std::string & szTargetProcessName, DWORD dwDesiredAccess, BOOL bInheritHandle);
+extern bool g_bHandleTraceStopped;
+typedef void(__cdecl* _OnHandleCreated)(
+	_In_ HANDLE hProcess
+);
+extern void OnHandleCreated(HANDLE hProcess);
+extern void GetSonicHandle(const std::string & szWatchedProcessName, const std::string & szTargetProcessName, DWORD dwDesiredAccess, BOOL bInheritHandle, _OnHandleCreated callback);
 
 typedef struct _UNICODE_STRING
 {
@@ -26,59 +31,40 @@ typedef struct _OBJECT_ATTRIBUTES {
 	PVOID           SecurityQualityOfService;
 }  OBJECT_ATTRIBUTES, *POBJECT_ATTRIBUTES;
 
-typedef struct _PEB_LDR_DATA {
-	BYTE       Reserved1[8];
-	PVOID      Reserved2[3];
-	LIST_ENTRY InMemoryOrderModuleList;
-} PEB_LDR_DATA, *PPEB_LDR_DATA;
 
-typedef struct _RTL_USER_PROCESS_PARAMETERS {
-	UCHAR           Reserved1[16];
-	PVOID           Reserved2[10];
-	UNICODE_STRING  ImagePathName;
-	UNICODE_STRING  CommandLine;
-} RTL_USER_PROCESS_PARAMETERS, *PRTL_USER_PROCESS_PARAMETERS;
+typedef NTSTATUS(NTAPI* _NtCreateThreadEx)(
+	PHANDLE hThread,
+	ACCESS_MASK DesiredAccess,
+	POBJECT_ATTRIBUTES ObjectAttributes,
+	HANDLE ProcessHandle,
+	LPTHREAD_START_ROUTINE lpStartAddress,
+	LPVOID lpParameter,
+	ULONG CreateFlags,
+	ULONG_PTR StackZeroBits,
+	SIZE_T SizeOfStackCommit,
+	SIZE_T SizeOfStackReserve,
+	LPVOID AttributeList
+	);
+typedef HMODULE(WINAPI* _LoadLibraryA)(
+	_In_ LPCTSTR lpFileName
+	);
+typedef FARPROC(WINAPI* _GetProcAddress)(
+	_In_ HMODULE hModule,
+	_In_ LPCSTR  lpProcName
+	);
+typedef BOOL(WINAPI* _DllMain)(
+	HINSTANCE	hinstDLL,
+	DWORD		fdwReason,
+	LPVOID		lpReserved
+	);
 
-typedef struct _LDR_DATA_TABLE_ENTRY {
-	LIST_ENTRY InLoadOrderLinks;
-	LIST_ENTRY InMemoryOrderModuleList;
-	LIST_ENTRY InInitializationOrderModuleList;
-	PVOID DllBase;
-	PVOID EntryPoint;
-	ULONG SizeOfImage;
-	UNICODE_STRING FullDllName;
-	UNICODE_STRING BaseDllName;
-	ULONG Flags;
-	USHORT LoadCount;
-	USHORT TlsIndex;
-	union {
-		LIST_ENTRY HashLinks;
-		struct
-		{
-			PVOID SectionPointer;
-			ULONG CheckSum;
-		};
-	};
-	union {
-		ULONG TimeDateStamp;
-		PVOID LoadedImports;
-	};
-	PVOID EntryPointActivationContext;
-	PVOID PatchInformation;
-} LDR_DATA_TABLE_ENTRY, *PLDR_DATA_TABLE_ENTRY;
-
-typedef struct _PEB {
-	BYTE                          Reserved1[2];
-	BYTE                          BeingDebugged;
-	BYTE                          Reserved2[1];
-	PVOID                         Reserved3[2];
-	PPEB_LDR_DATA                 Ldr;
-	PRTL_USER_PROCESS_PARAMETERS  ProcessParameters;
-	BYTE                          Reserved4[104];
-	PVOID                         Reserved5[52];
-	PVOID                         PostProcessInitRoutine;
-	BYTE                          Reserved6[128];
-	PVOID                         Reserved7[1];
-	ULONG                         SessionId;
-} PEB, *PPEB;
+typedef struct _PREMOTE_THREAD_PARAM
+{
+	PVOID			ImageBase;
+	PIMAGE_NT_HEADERS			NtHeaders;
+	PIMAGE_BASE_RELOCATION		BaseRelocation;
+	PIMAGE_IMPORT_DESCRIPTOR	ImportDirectory;
+	_LoadLibraryA	LoadLibraryA;
+	_GetProcAddress GetProcAddress;
+}REMOTE_THREAD_PARAM, *PREMOTE_THREAD_PARAM;
 

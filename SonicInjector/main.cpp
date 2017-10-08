@@ -1,41 +1,8 @@
 #include "main.h"
 #pragma comment(lib, "psapi.lib")
 
-typedef NTSTATUS(NTAPI* _NtCreateThreadEx)(
-	PHANDLE hThread, 
-	ACCESS_MASK DesiredAccess, 
-	POBJECT_ATTRIBUTES ObjectAttributes, 
-	HANDLE ProcessHandle, 
-	LPTHREAD_START_ROUTINE lpStartAddress, 
-	LPVOID lpParameter, 
-	ULONG CreateFlags, 
-	ULONG_PTR StackZeroBits,
-	SIZE_T SizeOfStackCommit, 
-	SIZE_T SizeOfStackReserve, 
-	LPVOID AttributeList
-);
-typedef HMODULE(WINAPI* _LoadLibraryA)(
-	_In_ LPCTSTR lpFileName
-);
-typedef FARPROC(WINAPI* _GetProcAddress)(
-	_In_ HMODULE hModule,
-	_In_ LPCSTR  lpProcName
-);
-typedef BOOL(WINAPI* _DllMain)(
-	HINSTANCE	hinstDLL,
-	DWORD		fdwReason,
-	LPVOID		lpReserved
-);
-
-typedef struct _PREMOTE_THREAD_PARAM
-{
-	PVOID			ImageBase;
-	PIMAGE_NT_HEADERS			NtHeaders;
-	PIMAGE_BASE_RELOCATION		BaseRelocation;
-	PIMAGE_IMPORT_DESCRIPTOR	ImportDirectory;
-	_LoadLibraryA	LoadLibraryA;
-	_GetProcAddress GetProcAddress;
-}REMOTE_THREAD_PARAM, *PREMOTE_THREAD_PARAM;
+bool g_bHandleTraceStopped = false;
+std::wstring g_wszModuleName = L"";
 
 DWORD WINAPI RemoteThreadRoutine(LPVOID lpParam)
 {
@@ -130,6 +97,7 @@ static int UselessFunction()
 	return 0;
 }
 
+
 bool LoadDLL(HANDLE hProcess, const wchar_t* c_wszModule)
 {
 	bool bResult = false;
@@ -208,7 +176,7 @@ bool LoadDLL(HANDLE hProcess, const wchar_t* c_wszModule)
 	}
 
 	// Copy sections
-	for (WORD i = 0; i<pINH->FileHeader.NumberOfSections; i++)
+	for (WORD i = 0; i < pINH->FileHeader.NumberOfSections; i++)
 	{
 		if (!pISH[i].PointerToRawData && !pISH[i].VirtualAddress) {
 			printf("Null raw data pointer or virtual address!\n");
@@ -253,11 +221,12 @@ bool LoadDLL(HANDLE hProcess, const wchar_t* c_wszModule)
 	}
 
 	// Create thread
+	DWORD dwFlag = 0x00000004; /* HideFromDebugger */
 	HANDLE hThread = INVALID_HANDLE_VALUE;
-	auto ntStatus = NtCreateThreadEx(&hThread, THREAD_ALL_ACCESS, 0, hProcess, (LPTHREAD_START_ROUTINE)((PREMOTE_THREAD_PARAM)pRemoteLoader + 1), pRemoteLoader, 0, 0, 0, 0, 0);
+	auto ntStatus = NtCreateThreadEx(&hThread, THREAD_ALL_ACCESS, 0, hProcess, (LPTHREAD_START_ROUTINE)((PREMOTE_THREAD_PARAM)pRemoteLoader + 1), pRemoteLoader, dwFlag, 0, 0, 0, 0);
 	if (ntStatus != (NTSTATUS)0x00000000L || !hThread || hThread == INVALID_HANDLE_VALUE) {
 		VirtualFreeEx(hProcess, pRemoteFileBuffer, 0, MEM_RELEASE);
-		printf("NtCreateThreadEx fail! Error code: %u\n", GetLastError());
+		printf("NtCreateThreadEx fail! Error code: %p\n", (void*)ntStatus);
 		goto skip;
 	}
 
@@ -298,21 +267,21 @@ skip:
 	return bResult;
 }
 
+void OnHandleCreated(HANDLE hProcess)
+{
+	if (!hProcess || hProcess == INVALID_HANDLE_VALUE)
+		return;
+
+	auto bLoadRet = LoadDLL(hProcess, g_wszModuleName.c_str());
+	if (bLoadRet) {
+		printf("Injection successfully completed!\n");
+		g_bHandleTraceStopped = true;
+	}
+}
+
 int main()
 {
-#if 0
-	auto hGame = GetSonicHandle("steam.exe", "blacksquadgame.exe", PROCESS_ALL_ACCESS, FALSE);
-	if (hGame && hGame != INVALID_HANDLE_VALUE)
-	{
-		std::wstring wszModuleName = L"C:\\Users\\Koray\\Desktop\\SonicInjector\\Release\\TestModule.dll";
-
-		auto bLoadRet = LoadDLL(hGame, wszModuleName.c_str());
-		if (bLoadRet)
-			printf("Injection successfully completed!\n");
-	}
-#endif
-
-	// Process inputs
+	// Inputs
 	std::string szProcessName = "";
 	printf("Process name: ");
 	std::getline(std::cin, szProcessName);
@@ -323,31 +292,14 @@ int main()
 	std::getline(std::cin, szParentName);
 	std::transform(szParentName.begin(), szParentName.end(), szParentName.begin(), tolower);
 
+	printf("Module name(w/path):");
+	std::getline(std::wcin, g_wszModuleName);
+	std::transform(g_wszModuleName.begin(), g_wszModuleName.end(), g_wszModuleName.begin(), towlower);
+
 	printf("Ready to get handle, please start target program.\n");
 
 	// Game
-	auto hGame = GetSonicHandle(szParentName, szProcessName, PROCESS_ALL_ACCESS, FALSE);
-	if (!hGame || hGame == INVALID_HANDLE_VALUE) {
-		printf("Handle can not created!\n");
-		std::cin.get();
-		return EXIT_SUCCESS;
-	}
-
-	printf("hGame: %p\n", hGame);
-
-	// DLL input
-	std::wstring wszModuleName = L"";
-	printf("Module name(w/path):");
-	std::getline(std::wcin, wszModuleName);
-	std::transform(wszModuleName.begin(), wszModuleName.end(), wszModuleName.begin(), towlower);
-
-	// Injection
-	auto bLoadRet = LoadDLL(hGame, wszModuleName.c_str());
-	if (!bLoadRet) {
-		printf("DLL can not injected!\n");
-		std::cin.get();
-		return EXIT_SUCCESS;
-	}
+	GetSonicHandle(szParentName, szProcessName, PROCESS_ALL_ACCESS, FALSE, &OnHandleCreated);
 
 	printf("Process Completed!\n");
 	std::cin.get();

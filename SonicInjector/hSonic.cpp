@@ -26,9 +26,8 @@ std::vector <DWORD> GetProcessIdsFromProcessName(const char* c_szProcessName)
 	return vPIDs;
 }
 
-HANDLE GetHandleForIOProcesses(HANDLE hIOPort, const std::string & szTargetProcessName, DWORD dwDesiredAccess, BOOL bInheritHandle)
+void GetHandleForIOProcesses(HANDLE hIOPort, const std::string & szTargetProcessName, DWORD dwDesiredAccess, BOOL bInheritHandle, _OnHandleCreated callback)
 {
-	HANDLE hTarget = INVALID_HANDLE_VALUE;
 	char buffer[MAX_PATH];
 	DWORD numberOfBytesTransferred;
 	ULONG_PTR completionKey;
@@ -36,6 +35,9 @@ HANDLE GetHandleForIOProcesses(HANDLE hIOPort, const std::string & szTargetProce
 
 	while (GetQueuedCompletionStatus(hIOPort, &numberOfBytesTransferred, &completionKey, &overlapped, INFINITE))
 	{
+		if (g_bHandleTraceStopped)
+			break;
+
 		HANDLE hSonicProcess = OpenProcess(dwDesiredAccess, bInheritHandle, reinterpret_cast<DWORD>(overlapped));
 		if (hSonicProcess && hSonicProcess != INVALID_HANDLE_VALUE)
 		{
@@ -51,20 +53,13 @@ HANDLE GetHandleForIOProcesses(HANDLE hIOPort, const std::string & szTargetProce
 			printf("Parsed name: %s\n", szProcessImageFileName.c_str());
 
 			if (szProcessImageFileName == szTargetProcessName)
-			{
-				hTarget = hSonicProcess;
-				PostQueuedCompletionStatus(hIOPort, NULL, NULL, NULL);
-				break;
-			}
-			CloseHandle(hSonicProcess);
+				callback(hSonicProcess);
 		}
-		Sleep(1);
+		// Sleep(1);
 	}
-
-	return hTarget;
 }
 
-HANDLE GetSonicHandle(const std::string & szWatchedProcessName, const std::string & szTargetProcessName, DWORD dwDesiredAccess, BOOL bInheritHandle)
+void GetSonicHandle(const std::string & szWatchedProcessName, const std::string & szTargetProcessName, DWORD dwDesiredAccess, BOOL bInheritHandle, _OnHandleCreated callback)
 {
 	// Predefined veriables
 	std::vector <HANDLE> vWatchedProcessHandles;
@@ -122,9 +117,7 @@ HANDLE GetSonicHandle(const std::string & szWatchedProcessName, const std::strin
 		goto clean;
 
 	// Create IO watcher
-	auto hTarget = GetHandleForIOProcesses(hIOPort, szTargetProcessName, dwDesiredAccess, bInheritHandle);
-	if (!hTarget || hTarget == INVALID_HANDLE_VALUE)
-		goto clean;
+	GetHandleForIOProcesses(hIOPort, szTargetProcessName, dwDesiredAccess, bInheritHandle, callback);
  
 	/* Cleanup before returning handle */
 clean:
@@ -139,7 +132,5 @@ clean:
 
 	if (hJobObject && hJobObject != INVALID_HANDLE_VALUE)
 		CloseHandle(hJobObject);
-
-	return hTarget;
 }
 
